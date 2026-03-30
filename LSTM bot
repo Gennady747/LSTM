@@ -129,8 +129,9 @@ async def cmd_status(message: Message):
 
 async def main():
     logging.basicConfig(level=logging.INFO)
-    # ← ИСПРАВЛЕНО: убрана переменная status, которая не была определена
-    print(f"🚀 Бот запущен | Statsmodels: {'✅' if STATSMODELS else '❌'}")
+    # ← ИСПРАВЛЕНО: убрана переменная status
+    model_status = "✅" if STATSMODELS else "❌"
+    print(f"🚀 Бот запущен | Statsmodels: {model_status}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
