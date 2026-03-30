@@ -1,0 +1,163 @@
+import asyncio
+import os
+import torch
+import torch.nn as nn
+from aiogram import Bot, Dispatcher
+from aiogram.filters import Command
+from aiogram.types import Message
+import logging
+
+# ================== НАСТРОЙКИ ==================
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN не найден в переменных окружения!")
+
+MODEL_PATH = "lstm_model.pth"
+MAX_INPUT_LENGTH = 1000
+
+# ================== LSTM-МОДЕЛЬ ==================
+class MyLSTM(nn.Module):
+    def __init__(self, input_size=1, hidden_size=64, num_layers=2, output_size=1):
+        super().__init__()
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        self.fc = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x):
+        out, _ = self.lstm(x)
+        return self.fc(out[:, -1, :])
+
+# ================== ЗАГРУЗКА МОДЕЛИ ==================
+device = torch.device("cpu")
+model = MyLSTM().to(device)
+
+# Проверяем существование файла
+if not os.path.exists(MODEL_PATH):
+    raise FileNotFoundError(
+        f"❌ Файл {MODEL_PATH} не найден!\n"
+        f"Загрузите файл на сервер одним из способов:\n"
+        f"1. Через панель Bothost (Файлы → Загрузить)\n"
+        f"2. Через Git (добавьте в репозиторий)\n"
+        f"3. Через SFTP"
+    )
+
+try:
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only=True))
+    model.eval()
+    
+    # Подсчёт параметров
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    
+    print(f"✅ Модель успешно загружена")
+    print(f"   PyTorch: {torch.__version__}")
+    print(f"   Всего параметров: {total_params:,}")
+    print(f"   Обучаемых параметров: {trainable_params:,}")
+    print(f"   Размер файла: {os.path.getsize(MODEL_PATH) / 1024:.2f} KB")
+    
+except Exception as e:
+    raise RuntimeError(f"❌ Ошибка загрузки модели: {e}")
+
+# ================== БОТ ==================
+bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+dp = Dispatcher()
+
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    await message.answer(
+        "👋 <b>LSTM-бот запущен!</b>\n\n"
+        "📊 <b>Доступные команды:</b>\n"
+        "• <code>/predict 1.2 3.4 5.6</code> — предсказание\n"
+        "• <code>/status</code> — информация о модели\n"
+        "• <code>/help</code> — помощь"
+    )
+
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    await message.answer(
+        "📖 <b>Как использовать:</b>\n\n"
+        "Отправьте числовую последовательность:\n"
+        "<code>/predict 0.5 1.2 3.4 2.1 0.8</code>\n\n"
+        "Бот вернёт предсказание следующего значения.\n\n"
+        "<b>Ограничения:</b>\n"
+        f"• Макс. длина: {MAX_INPUT_LENGTH} чисел\n"
+        "• Только числа (целые или дробные)"
+    )
+
+@dp.message(Command("predict"))
+async def cmd_predict(message: Message):
+    args = message.text.split()
+    
+    if len(args) < 2:
+        await message.reply(
+            "❌ <b>Ошибка:</b> укажите числа после команды\n\n"
+            "Пример: <code>/predict 1.0 2.5 3.0</code>"
+        )
+        return
+    
+    try:
+        values = list(map(float, args[1:]))
+        
+        if len(values) > MAX_INPUT_LENGTH:
+            await message.reply(
+                f"❌ Слишком много данных.\n"
+                f"Максимум: {MAX_INPUT_LENGTH}, получено: {len(values)}"
+            )
+            return
+        
+        if len(values) == 0:
+            raise ValueError("Нет числовых данных")
+        
+        # Подготовка входных данных [batch=1, seq_len, features=1]
+        input_tensor = torch.tensor(
+            values, 
+            dtype=torch.float32
+        ).unsqueeze(0).unsqueeze(-1).to(device)
+        
+        # Предсказание
+        with torch.no_grad():
+            prediction = model(input_tensor)
+        
+        pred_value = prediction.item()
+        
+        await message.reply(
+            f"✅ <b>Результат:</b>\n"
+            f"Вход: <code>{len(values)}</code> значений\n"
+            f"Предсказание: <code>{pred_value:.6f}</code>"
+        )
+        
+    except ValueError:
+        await message.reply(
+            "❌ <b>Ошибка:</b> все значения должны быть числами\n"
+            "Пример: <code>/predict 1.5 2.0 3.5</code>"
+        )
+    except Exception as e:
+        logging.error(f"Prediction error: {e}")
+        await message.reply("❌ Ошибка при обработке запроса")
+
+@dp.message(Command("status"))
+async def cmd_status(message: Message):
+    total_params = sum(p.numel() for p in model.parameters())
+    file_size = os.path.getsize(MODEL_PATH) / 1024
+    
+    await message.reply(
+        f"📊 <b>Статус модели</b>\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"Статус: ✅ Загружена\n"
+        f"PyTorch: <code>{torch.__version__}</code>\n"
+        f"Параметров: <code>{total_params:,}</code>\n"
+        f"Размер файла: <code>{file_size:.2f} KB</code>\n"
+        f"Device: <code>{device}</code>"
+    )
+
+async def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    print("🚀 LSTM Telegram Bot запущен...")
+    print(f"   Модель: {MODEL_PATH}")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
