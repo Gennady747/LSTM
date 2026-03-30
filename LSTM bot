@@ -4,7 +4,7 @@ import numpy as np
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message
-from aiogram.client.default import DefaultBotProperties  # ← НОВОЕ
+from aiogram.client.default import DefaultBotProperties
 import logging
 
 try:
@@ -70,10 +70,9 @@ class SmartPredictor:
 
 model = SmartPredictor()
 
-# ← ИСПРАВЛЕННАЯ СТРОКА 57
 bot = Bot(
     token=BOT_TOKEN,
-    default=DefaultBotProperties(parse_mode="HTML")  # Новый синтаксис aiogram 3.7+
+    default=DefaultBotProperties(parse_mode="HTML")
 )
 
 dp = Dispatcher()
@@ -130,7 +129,8 @@ async def cmd_status(message: Message):
 
 async def main():
     logging.basicConfig(level=logging.INFO)
-    print(f"🚀 Бот | {status}")
+    # ← ИСПРАВЛЕНО: убрана переменная status, которая не была определена
+    print(f"🚀 Бот запущен | Statsmodels: {'✅' if STATSMODELS else '❌'}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
